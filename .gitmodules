@@ -1,3 +1,7 @@
 [submodule "components/Adafruit-GFX-Library-ESP-IDF"]
 	path = components/Adafruit-GFX-Library-ESP-IDF
 	url = https://github.com/heblushabus/Adafruit-GFX-Library-ESP-IDF
+[submodule "components/esp_lcd_ssd1680"]
+	path = components/esp_lcd_ssd1680
+	url = https://github.com/heblushabus/esp_lcd_panel_ssd1680
+	branch = ssd1680-dev
