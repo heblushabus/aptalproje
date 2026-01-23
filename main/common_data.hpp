@@ -19,6 +19,10 @@ struct DeviceStatus {
   // Battery/Network
   float battery_voltage;
   bool wifi_connected;
+
+  // Touch inputs
+  bool touch_4;
+  bool touch_5;
 };
 
 class CommonData {

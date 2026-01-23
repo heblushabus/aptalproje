@@ -5,6 +5,7 @@
 #include "freertos/task.h"
 #include "network_manager.hpp"
 #include "secrets.hpp"
+#include "touch_manager.hpp"
 #include "ui_assets.hpp"
 #include <stdio.h>
 #include <time.h>
@@ -79,6 +80,16 @@ void renderUI(Adafruit_SSD1680 *display, const DeviceStatus &status,
   display->drawBitmap(98, 4, image_menu_settings_sliders_two_bits, 14, 16,
                       GxEPD_BLACK);
   display->drawBitmap(181, 108, image_check_bits, 12, 16, GxEPD_BLACK);
+
+  // Touch Status
+  display->setFont(NULL);
+  display->setCursor(10, 115);
+  display->print("T4: ");
+  display->print(status.touch_4 ? "1" : "0");
+
+  display->setCursor(60, 115);
+  display->print("T5: ");
+  display->print(status.touch_5 ? "1" : "0");
 }
 
 static void display_task(void *pvParameters) {
@@ -119,6 +130,14 @@ extern "C" void app_main(void) {
   if (!display) {
     ESP_LOGE(TAG, "Failed to get display handle!");
     return;
+  }
+
+  // Initialize Touch
+  static TouchManager touchManager;
+  if (touchManager.init() == ESP_OK) {
+    touchManager.start();
+  } else {
+    ESP_LOGE(TAG, "Touch initialization failed!");
   }
 
   // --- Network Setup ---
