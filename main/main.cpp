@@ -1,3 +1,4 @@
+#include "battery_manager.hpp"
 #include "common_data.hpp"
 #include "display_manager.hpp"
 #include "esp_log.h"
@@ -72,6 +73,14 @@ void renderUI(Adafruit_SSD1680 *display, const DeviceStatus &status,
 
   // Bitmaps
   display->drawBitmap(40, 12, image_Layer_8_bits, 18, 19, GxEPD_BLACK);
+
+  // Battery Voltage
+  display->setFont(NULL);
+  display->setCursor(235, 44);
+  char bat_buf[10];
+  snprintf(bat_buf, sizeof(bat_buf), "%.2fV", status.battery_voltage);
+  display->print(bat_buf);
+
   display->drawBitmap(267, 37, image_battery_50_bits, 24, 16, GxEPD_BLACK);
   display->drawBitmap(276, 5, image_choice_bullet_on_bits, 15, 16, GxEPD_BLACK);
   display->drawBitmap(233, 1, image_ButtonUp_bits, 7, 4, GxEPD_BLACK);
@@ -138,6 +147,14 @@ extern "C" void app_main(void) {
     touchManager.start();
   } else {
     ESP_LOGE(TAG, "Touch initialization failed!");
+  }
+
+  // Initialize Battery
+  static BatteryManager batteryManager;
+  if (batteryManager.init() == ESP_OK) {
+    batteryManager.start();
+  } else {
+    ESP_LOGE(TAG, "Battery initialization failed!");
   }
 
   // --- Network Setup ---
