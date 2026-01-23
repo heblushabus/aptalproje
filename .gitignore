@@ -1,0 +1,10 @@
+build/
+.cache/
+sdkconfig
+dependencies.lock
+**/build/
+**.user
+**.su
+main/secrets.hpp
+**.vsproj
+**.sln
