@@ -136,7 +136,7 @@ esp_err_t TouchManager::init() {
 
     // Set threshold to 2% (0.02) of reference.
     // Ensure at least some minimum threshold
-    uint32_t thresh = (uint32_t)(benchmark_val * 0.02);
+    uint32_t thresh = (uint32_t)(benchmark_val * 0.1);
     if (thresh < 500)
       thresh = 500; // Minimum threshold floor
 
