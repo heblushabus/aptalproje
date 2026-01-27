@@ -8,3 +8,4 @@ dependencies.lock
 main/secrets.hpp
 **.vsproj
 **.sln
+.vscode/
