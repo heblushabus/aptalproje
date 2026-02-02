@@ -7,10 +7,12 @@
 #include "freertos/task.h"
 #include "network_manager.hpp"
 #include "nvs_flash.h"
+#include "scd4x_manager.hpp"
 #include "secrets.hpp"
 #include "storage_manager.h"
 #include "touch_manager.hpp"
 #include "ui_manager.hpp"
+#include <i2cdev.h>
 #include <stdio.h>
 #include <time.h>
 
@@ -60,6 +62,18 @@ extern "C" void app_main(void) {
   // Initialize Storage
   static StorageManager storageManager;
   storageManager.mount();
+
+  // Initialize I2C Library
+  ESP_ERROR_CHECK(i2cdev_init());
+
+  // Initialize SCD4x (CO2 Sensor)
+  static Scd4xManager scd4xManager;
+  // SDA: 47, SCL: 21
+  if (scd4xManager.init(47, 21) == ESP_OK) {
+    scd4xManager.start();
+  } else {
+    ESP_LOGE(TAG, "SCD4x initialization failed!");
+  }
 
   // --- Network Setup ---
   time_t now;

@@ -19,3 +19,4 @@ managed_components/esp-idf-lib__i2cdev/i2cdev.c
 managed_components/esp-idf-lib__i2cdev/i2cdev.h
 managed_components/esp-idf-lib__i2cdev/idf_component.yml
 managed_components/esp-idf-lib__i2cdev/common/cmake/esp-idf-lib.cmake
+components/Adafruit-GFX-Library-ESP-idf
