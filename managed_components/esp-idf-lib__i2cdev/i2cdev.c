@@ -110,6 +110,15 @@ static void deregister_device(i2c_dev_t *dev)
 esp_err_t i2cdev_init(void)
 {
     ESP_LOGV(TAG, "Initializing I2C subsystem...");
+
+    // Guard against re-initialization to prevent resource leaks
+    static bool initialized = false;
+    if (initialized)
+    {
+        ESP_LOGW(TAG, "I2C subsystem already initialized, skipping re-initialization");
+        return ESP_OK;
+    }
+
     memset(active_devices, 0, sizeof(active_devices));
     for (int i = 0; i < I2C_NUM_MAX; i++)
     {
@@ -129,6 +138,8 @@ esp_err_t i2cdev_init(void)
         i2c_ports[i].sda_pin_current = -1;
         i2c_ports[i].scl_pin_current = -1;
     }
+
+    initialized = true;  // Mark as initialized
     ESP_LOGV(TAG, "I2C subsystem initialized.");
     return ESP_OK;
 }
@@ -218,9 +229,16 @@ esp_err_t i2c_dev_delete_mutex(i2c_dev_t *dev)
     // Update port reference count if port is valid
     if (dev->port < I2C_NUM_MAX)
     {
-        if (xSemaphoreTake(i2c_ports[dev->port].lock, pdMS_TO_TICKS(CONFIG_I2CDEV_TIMEOUT)) == pdTRUE)
+        // Check if port mutex is initialized
+        if (!i2c_ports[dev->port].lock)
         {
-            if (i2c_ports[dev->port].installed && i2c_ports[dev->port].ref_count > 0)
+            ESP_LOGW(TAG, "[0x%02x at %d] Port mutex not initialized, skipping ref_count update", dev->addr, dev->port);
+            // Continue with cleanup - just skip the mutex-protected section
+        }
+        else if (xSemaphoreTake(i2c_ports[dev->port].lock, pdMS_TO_TICKS(CONFIG_I2CDEV_TIMEOUT)) == pdTRUE)
+        {
+            // Only decrement ref_count if THIS device was actually added to the bus
+            if (i2c_ports[dev->port].installed && i2c_ports[dev->port].ref_count > 0 && dev->dev_handle != NULL)
             {
                 i2c_ports[dev->port].ref_count--;
                 ESP_LOGV(TAG, "[Port %d] Decremented ref_count to %" PRIu32, dev->port, i2c_ports[dev->port].ref_count);
@@ -244,6 +262,10 @@ esp_err_t i2c_dev_delete_mutex(i2c_dev_t *dev)
                     i2c_ports[dev->port].sda_pin_current = -1;
                     i2c_ports[dev->port].scl_pin_current = -1;
                 }
+            }
+            else if (dev->dev_handle == NULL)
+            {
+                ESP_LOGV(TAG, "[0x%02x at %d] Device was never added to bus, skipping ref_count decrement", dev->addr, dev->port);
             }
             xSemaphoreGive(i2c_ports[dev->port].lock);
         }
@@ -335,6 +357,13 @@ static esp_err_t i2c_setup_port(i2c_dev_t *dev) // dev is non-const to update de
 
     esp_err_t res = ESP_OK;
     i2c_port_state_t *port_state = &i2c_ports[dev->port];
+
+    // Check if i2cdev subsystem is initialized
+    if (!port_state->lock)
+    {
+        ESP_LOGE(TAG, "[Port %d] I2C subsystem not initialized - call i2cdev_init() first", dev->port);
+        return ESP_ERR_INVALID_STATE;
+    }
 
     ESP_LOGV(TAG, "[Port %d] Setup request for device 0x%02x", dev->port, dev->addr);
     if (xSemaphoreTake(port_state->lock, pdMS_TO_TICKS(CONFIG_I2CDEV_TIMEOUT)) != pdTRUE)
@@ -498,6 +527,14 @@ static esp_err_t i2c_setup_device(i2c_dev_t *dev) // dev is non-const - modifies
     if (dev->dev_handle == NULL)
     {
         i2c_port_state_t *port_state = &i2c_ports[dev->port];
+
+        // Check if i2cdev subsystem is initialized
+        if (!port_state->lock)
+        {
+            ESP_LOGE(TAG, "[0x%02x at %d] I2C subsystem not initialized - call i2cdev_init() first", dev->addr, dev->port);
+            return ESP_ERR_INVALID_STATE;
+        }
+
         if (xSemaphoreTake(port_state->lock, pdMS_TO_TICKS(CONFIG_I2CDEV_TIMEOUT)) != pdTRUE)
         {
             ESP_LOGE(TAG, "[0x%02x at %d] Could not take port mutex for device add", dev->addr, dev->port);
@@ -750,12 +787,18 @@ esp_err_t i2c_dev_write(const i2c_dev_t *dev, const void *out_reg, size_t out_re
 
 esp_err_t i2c_dev_read_reg(const i2c_dev_t *dev, uint8_t reg, void *data, size_t size)
 {
+    if (!dev)
+        return ESP_ERR_INVALID_ARG;
+
     ESP_LOGV(TAG, "[0x%02x at %d] i2c_dev_read_reg called (reg: 0x%02x, size: %u)", dev->addr, dev->port, reg, size);
     return i2c_dev_read(dev, &reg, 1, data, size);
 }
 
 esp_err_t i2c_dev_write_reg(const i2c_dev_t *dev, uint8_t reg, const void *data, size_t size)
 {
+    if (!dev)
+        return ESP_ERR_INVALID_ARG;
+
     ESP_LOGV(TAG, "[0x%02x at %d] i2c_dev_write_reg called (reg: 0x%02x, size: %u)", dev->addr, dev->port, reg, size);
     return i2c_dev_write(dev, &reg, 1, data, size);
 }
@@ -824,6 +867,9 @@ esp_err_t i2c_dev_check_present(const i2c_dev_t *dev_const)
 // The new driver implementation uses i2c_master_probe which doesn't need operation_type
 esp_err_t i2c_dev_probe(const i2c_dev_t *dev, i2c_dev_type_t operation_type)
 {
+    if (!dev)
+        return ESP_ERR_INVALID_ARG;
+
     ESP_LOGV(TAG, "[0x%02x at %d] Legacy probe called (operation_type %d), redirecting to new implementation", dev->addr, dev->port, operation_type);
 
     return i2c_dev_check_present(dev);
@@ -894,4 +940,47 @@ esp_err_t i2cdev_done(void)
     } // end for loop
     ESP_LOGV(TAG, "I2C subsystem cleanup finished with result: %d", result);
     return result;
+}
+
+esp_err_t i2cdev_get_shared_handle(i2c_port_t port, void **bus_handle)
+{
+    if (port >= I2C_NUM_MAX || bus_handle == NULL)
+    {
+        ESP_LOGE(TAG, "Invalid arguments: port=%d, bus_handle=%p", port, bus_handle);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    i2c_port_state_t *port_state = &i2c_ports[port];
+
+    // Check if i2cdev subsystem is initialized
+    if (port_state->lock == NULL)
+    {
+        ESP_LOGE(TAG, "[Port %d] I2C subsystem not initialized - call i2cdev_init() first", port);
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    // Take port mutex for thread-safe access
+    if (xSemaphoreTake(port_state->lock, pdMS_TO_TICKS(CONFIG_I2CDEV_TIMEOUT)) != pdTRUE)
+    {
+        ESP_LOGE(TAG, "[Port %d] Could not take port mutex for get_shared_handle", port);
+        return ESP_ERR_TIMEOUT;
+    }
+
+    // Check if bus is initialized
+    if (!port_state->installed || port_state->bus_handle == NULL)
+    {
+        xSemaphoreGive(port_state->lock);
+        ESP_LOGE(TAG, "[Port %d] Bus not initialized - create an i2c_dev_t device first to initialize the bus", port);
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    // Return the bus handle
+    *bus_handle = (void *)port_state->bus_handle;
+
+    ESP_LOGI(TAG, "[Port %d] Shared bus handle retrieved: %p (SDA=%d, SCL=%d, ref_count=%" PRIu32 ")",
+             port, port_state->bus_handle, port_state->sda_pin_current,
+             port_state->scl_pin_current, port_state->ref_count);
+
+    xSemaphoreGive(port_state->lock);
+    return ESP_OK;
 }

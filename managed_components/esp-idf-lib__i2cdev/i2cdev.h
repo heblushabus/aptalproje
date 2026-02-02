@@ -322,6 +322,65 @@ esp_err_t i2c_dev_read_reg(const i2c_dev_t *dev, uint8_t reg, void *data, size_t
 esp_err_t i2c_dev_write_reg(const i2c_dev_t *dev, uint8_t reg, const void *data, size_t size);
 
 /**
+ * @brief Get shared I2C bus handle for external ESP-IDF components
+ *
+ * This function allows external ESP-IDF components (like esp_lcd) to access
+ * the i2cdev-managed I2C bus handle for shared bus operations. This enables
+ * thread-safe sharing of the I2C bus between i2cdev-based sensors and native
+ * ESP-IDF components.
+ *
+ * @note USAGE PATTERN:
+ * 1. Initialize i2cdev subsystem with i2cdev_init()
+ * 2. Create at least one i2c_dev_t device on the desired port (this initializes the bus)
+ * 3. Call this function to retrieve the bus handle
+ * 4. Pass the handle to ESP-IDF components (e.g., esp_lcd_new_panel_io_i2c)
+ *
+ * @note USAGE EXAMPLE:
+ * // 1. Initialize i2cdev
+ * i2cdev_init();
+ *
+ * // 2. Create a sensor device (initializes the bus)
+ * i2c_dev_t sensor = {
+ *     .port = I2C_NUM_0,
+ *     .addr = 0x29,  // TSL2591 light sensor
+ *     .cfg = {
+ *         .sda_io_num = GPIO_NUM_21,
+ *         .scl_io_num = GPIO_NUM_22,
+ *         .master.clk_speed = 400000
+ *     }
+ * };
+ * i2c_dev_create_mutex(&sensor);
+ *
+ * // 3. Get the shared bus handle
+ * i2c_master_bus_handle_t bus_handle;
+ * ESP_ERROR_CHECK(i2cdev_get_shared_handle(I2C_NUM_0, (void **)&bus_handle));
+ *
+ * // 4. Use it with esp_lcd or other ESP-IDF components
+ * esp_lcd_panel_io_handle_t io_handle;
+ * esp_lcd_panel_io_i2c_config_t io_config = {
+ *     .dev_addr = 0x3C,  // SSD1306 display
+ *     .control_phase_bytes = 1,
+ *     .dc_bit_offset = 6,
+ *     .lcd_cmd_bits = 8,
+ *     .lcd_param_bits = 8,
+ * };
+ * ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(bus_handle, &io_config, &io_handle));
+ *
+ * // Both the sensor and display now share the same I2C bus with proper synchronization!
+ *
+ * @param port I2C port number (e.g., I2C_NUM_0)
+ * @param[out] bus_handle Pointer to store the bus handle
+ * @return ESP_OK on success
+ * @return ESP_ERR_INVALID_ARG if port is invalid or bus_handle is NULL
+ * @return ESP_ERR_INVALID_STATE if i2cdev_init() was not called or bus for this port is not initialized yet
+ * @return ESP_ERR_TIMEOUT if port mutex could not be acquired
+ *
+ * @warning The returned handle is managed by i2cdev. Do NOT call i2c_del_master_bus()
+ *          on it directly - i2cdev will handle cleanup when the last device is removed.
+ */
+esp_err_t i2cdev_get_shared_handle(i2c_port_t port, void **bus_handle);
+
+/**
  * @brief Take device mutex with error checking
  */
 #define I2C_DEV_TAKE_MUTEX(dev)                                                                                                                                                                        \

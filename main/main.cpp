@@ -6,7 +6,9 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "network_manager.hpp"
+#include "nvs_flash.h"
 #include "secrets.hpp"
+#include "storage_manager.h"
 #include "touch_manager.hpp"
 #include "ui_manager.hpp"
 #include <stdio.h>
@@ -16,6 +18,15 @@ static const char *TAG = "main";
 
 extern "C" void app_main(void) {
   ESP_LOGI(TAG, "Starting up...");
+
+  // Initialize NVS
+  esp_err_t ret = nvs_flash_init();
+  if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
+      ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    ESP_ERROR_CHECK(nvs_flash_erase());
+    ret = nvs_flash_init();
+  }
+  ESP_ERROR_CHECK(ret);
 
   // Initialize Display
   static DisplayManager displayManager;
@@ -46,6 +57,10 @@ extern "C" void app_main(void) {
     ESP_LOGE(TAG, "Battery initialization failed!");
   }
 
+  // Initialize Storage
+  static StorageManager storageManager;
+  storageManager.mount();
+
   // --- Network Setup ---
   time_t now;
   struct tm timeinfo;
@@ -72,7 +87,7 @@ extern "C" void app_main(void) {
   }
 
   // Create Display Task via UIManager
-  static UIManager uiManager(display);
+  static UIManager uiManager(display, &storageManager);
   uiManager.start();
 
   ESP_LOGI(TAG, "UI Manager started, app_main exiting.");

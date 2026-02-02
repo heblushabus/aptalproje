@@ -9,3 +9,13 @@ main/secrets.hpp
 **.vsproj
 **.sln
 .vscode/
+managed_components/*
+managed_components/esp-idf-lib__i2cdev/.component_hash
+managed_components/esp-idf-lib__i2cdev/.eil.yml
+managed_components/esp-idf-lib__i2cdev/.gitmodules
+managed_components/esp-idf-lib__i2cdev/CHECKSUMS.json
+managed_components/esp-idf-lib__i2cdev/CMakeLists.txt
+managed_components/esp-idf-lib__i2cdev/i2cdev.c
+managed_components/esp-idf-lib__i2cdev/i2cdev.h
+managed_components/esp-idf-lib__i2cdev/idf_component.yml
+managed_components/esp-idf-lib__i2cdev/common/cmake/esp-idf-lib.cmake

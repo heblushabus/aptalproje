@@ -2,29 +2,66 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "nvs.h"
+#include "nvs_flash.h"
+#include "storage_manager.h"
 #include "ui_assets.hpp"
 #include <stdio.h>
 #include <time.h>
 
 // Fonts
+
 #include "Fonts/FreeSans18pt7b.h"
+#include "Fonts/FreeSans7pt7b.h"
 #include "Fonts/FreeSans9pt7b.h"
 #include "Fonts/Picopixel.h"
 
 static const char *TAG = "UIManager";
 
 // Menu Items
-static const char *menu_items[] = {"Back", "Refresh", "Reboot"};
-static const int menu_item_count = 3;
+static const char *menu_items[] = {"Back", "Refresh", "Reboot", "Reader"};
+static const int menu_item_count = 4;
 
 // Compatibility defines
 #define GxEPD_BLACK GFX_BLACK
 #define GxEPD_WHITE GFX_WHITE
 
-UIManager::UIManager(Adafruit_SSD1680 *display)
-    : display(display), current_state(STATE_HOME), selected_menu_index(0) {
+#ifndef pgm_read_byte
+#define pgm_read_byte(addr) (*(const unsigned char *)(addr))
+#endif
+#ifndef pgm_read_word
+#define pgm_read_word(addr) (*(const unsigned short *)(addr))
+#endif
+#ifndef pgm_read_dword
+#define pgm_read_dword(addr) (*(const unsigned long *)(addr))
+#endif
+
+// Helper for GFXGlyph pointer math (from Adafruit_GFX.cpp)
+#if !defined(__INT_MAX__) || (__INT_MAX__ > 0xFFFF)
+#define pgm_read_pointer(addr) ((void *)pgm_read_dword(addr))
+#else
+#define pgm_read_pointer(addr) ((void *)pgm_read_word(addr))
+#endif
+
+inline GFXglyph *pgm_read_glyph_ptr(const GFXfont *gfxFont, uint8_t c) {
+#ifdef __AVR__
+  return &(((GFXglyph *)pgm_read_pointer(&gfxFont->glyph))[c]);
+#else
+  // expression in __AVR__ section may generate "dereferencing type-punned
+  // pointer will break strict-aliasing rules" warning In fact, on other
+  // platforms (such as STM32) there is no need to do this pointer magic as
+  // program memory may be read just like Data memory !
+  return gfxFont->glyph + c;
+#endif
+}
+
+UIManager::UIManager(Adafruit_SSD1680 *display, StorageManager *storageManager)
+    : display(display), storageManager(storageManager),
+      current_state(STATE_HOME), selected_menu_index(0), current_page_index(0) {
   btn4 = {false, false};
   btn5 = {false, false};
+  btn5_press_start_time = 0;
+  btn5_hold_triggered = false;
 }
 
 void UIManager::start() {
@@ -147,6 +184,201 @@ void UIManager::renderMenu() {
   }
 }
 
+void UIManager::saveProgress() {
+  nvs_handle_t my_handle;
+  esp_err_t err = nvs_open("reader", NVS_READWRITE, &my_handle);
+  if (err == ESP_OK) {
+    nvs_set_i32(my_handle, "page_idx", current_page_index);
+    nvs_commit(my_handle);
+    nvs_close(my_handle);
+    ESP_LOGI(TAG, "Saved page index: %d", current_page_index);
+  } else {
+    ESP_LOGE(TAG, "Error (%s) opening NVS handle", esp_err_to_name(err));
+  }
+}
+
+void UIManager::loadProgress() {
+  nvs_handle_t my_handle;
+  esp_err_t err = nvs_open("reader", NVS_READONLY, &my_handle);
+  if (err == ESP_OK) {
+    int32_t saved_page = 0;
+    err = nvs_get_i32(my_handle, "page_idx", &saved_page);
+    if (err == ESP_OK) {
+      current_page_index = saved_page;
+      ESP_LOGI(TAG, "Loaded page index: %d", current_page_index);
+    }
+    nvs_close(my_handle);
+  }
+}
+
+// Helper to paginate based on screen lines with word wrap, ignoring single
+// Helper to get text width using FreeSans7pt7b
+int getTextWidth(const std::string &text) {
+  int width = 0;
+  const GFXfont *gfxFont = &FreeSans7pt7b;
+  uint8_t first = pgm_read_byte(&gfxFont->first);
+  uint8_t last = pgm_read_byte(&gfxFont->last);
+
+  for (char c : text) {
+    if (c >= first && c <= last) {
+      GFXglyph *glyph = pgm_read_glyph_ptr(gfxFont, c - first);
+      width += pgm_read_byte(&glyph->xAdvance);
+    }
+  }
+  return width;
+}
+
+void UIManager::paginateContent(const std::string &content) {
+  pages.clear();
+  // current_page_index = 0; // Do not reset here
+
+  if (content.empty()) {
+    return;
+  }
+
+  // Visual Parameters for FreeSans7pt7b
+  // 7pt font is smaller.
+  // 128px height / ~11px line height = ~11 lines. Let's try 10.
+  const int MAX_LINES_PER_PAGE = 7;
+  // Width: 296px. Margin ~3-3px. Safe width = 290px.
+  const int MAX_LINE_WIDTH = 296;
+
+  std::string current_page_str;
+  int current_lines = 0;
+  int current_line_width = 0;
+
+  size_t idx = 0;
+  while (idx < content.length()) {
+    // 1. Consume Whitespace & Count Newlines
+    int newlines = 0;
+    while (
+        idx < content.length() &&
+        (content[idx] == ' ' || content[idx] == '\n' || content[idx] == '\r')) {
+      if (content[idx] == '\n')
+        newlines++;
+      idx++;
+    }
+
+    if (idx >= content.length())
+      break; // End of whitespace at end of file
+
+    // 2. Consume Word
+    size_t word_start = idx;
+    while (idx < content.length() && content[idx] != ' ' &&
+           content[idx] != '\n' && content[idx] != '\r') {
+      idx++;
+    }
+    std::string word = content.substr(word_start, idx - word_start);
+    int word_width = getTextWidth(word);
+
+    // 3. Determine Separator Logic
+    bool is_page_start = current_page_str.empty();
+    int space_width = getTextWidth(" ");
+
+    // Paragraph Break Detection (>1 newline)
+    if (newlines >= 2 && !is_page_start) {
+      // We want a blank line.
+      int cost_lines = (current_line_width > 0) ? 2 : 1;
+
+      if (current_lines + cost_lines >= MAX_LINES_PER_PAGE) {
+        // Page Full
+        pages.push_back(current_page_str);
+        current_page_str.clear();
+        current_lines = 0;
+        current_line_width = 0;
+        // On new page, ignore paragraph break (implicit at top)
+      } else {
+        // Apply Paragraph Break
+        if (current_line_width > 0) {
+          current_page_str += "\n\n";
+          current_lines += 2;
+        } else {
+          current_page_str += "\n";
+          current_lines += 1;
+        }
+        current_line_width = 0;
+      }
+    }
+    // Normal Word Separation (Space or Single Newline -> Space)
+    else if (!is_page_start) {
+      // Check if " " + word fits on current line.
+      if (current_line_width + space_width + word_width > MAX_LINE_WIDTH) {
+        // Wrap to next line
+        if (current_lines + 1 >= MAX_LINES_PER_PAGE) {
+          // Page Full
+          pages.push_back(current_page_str);
+          current_page_str.clear();
+          current_lines = 0;
+          current_line_width = 0;
+        } else {
+          current_page_str += "\n";
+          current_lines++;
+          current_line_width = 0;
+        }
+      } else {
+        // Fits on line
+        current_page_str += " ";
+        current_line_width += space_width;
+      }
+    } else {
+      // Page start
+    }
+
+    // 4. Add Word
+    current_page_str += word;
+    current_line_width += word_width;
+  }
+
+  if (!current_page_str.empty()) {
+    pages.push_back(current_page_str);
+  }
+}
+
+void UIManager::renderReader() {
+  display->clearBuffer();
+  display->setRotation(3);
+  display->setTextColor(GxEPD_BLACK);
+  display->setTextWrap(true);
+
+  // Load content if needed
+  if (pages.empty()) {
+    if (storageManager) {
+      std::string content = storageManager->readTextFile("/littlefs/book.txt");
+      if (content.empty()) {
+        display->setCursor(10, 50);
+        display->print("File empty or not found.");
+        return;
+      }
+      paginateContent(content);
+
+      // Validate loaded page index against new page count
+      if (current_page_index >= pages.size()) {
+        current_page_index = pages.empty() ? 0 : pages.size() - 1;
+      }
+    } else {
+      display->setCursor(10, 50);
+      display->print("Storage Error");
+      return;
+    }
+  }
+
+  // Content
+  display->setFont(&FreeSans7pt7b); // New serif font
+  display->setCursor(
+      0, 11); // Start closer to top-left but account for baseline (y=15 approx)
+
+  if (current_page_index < pages.size()) {
+    display->print(pages[current_page_index].c_str());
+  }
+
+  // Footer: Page X/Y
+  display->setFont(NULL);
+  char footer[32];
+  snprintf(footer, sizeof(footer), "%d / %d", current_page_index + 1,
+           (int)pages.size());
+  display->printRightAligned(296, 121, footer);
+}
+
 void UIManager::loop() {
   bool first_run = true;
   bool force_full_refresh = false;
@@ -191,6 +423,55 @@ void UIManager::loop() {
           need_redraw = true;
         } else if (selected_menu_index == 2) { // Reboot
           esp_restart();
+        } else if (selected_menu_index == 3) { // Reader
+          current_state = STATE_READER;
+          loadProgress(); // Load saved page
+          need_redraw = true;
+        }
+      }
+    } else if (current_state == STATE_READER) {
+      // Button 5 Logic: Hold for Exit, Click for Back
+      if (current_status.touch_5) { // Button is held down
+        if (btn5_press_start_time == 0) {
+          btn5_press_start_time = esp_timer_get_time();
+          btn5_hold_triggered = false;
+        } else {
+          if (!btn5_hold_triggered &&
+              (esp_timer_get_time() - btn5_press_start_time > 1000000)) {
+            // Hold detected (> 1s) -> Exit
+            ESP_LOGI(TAG, "Hold detected: Exiting Reader");
+            saveProgress();
+            current_state = STATE_MENU;
+            need_redraw = true;
+            btn5_hold_triggered = true; // Prevent click action on release
+          }
+        }
+      } else { // Button is released
+        if (btn5_press_start_time != 0) {
+          // Falling edge
+          if (!btn5_hold_triggered &&
+              (esp_timer_get_time() - btn5_press_start_time < 1000000)) {
+            // Short press -> Previous Page
+            if (current_page_index > 0) {
+              current_page_index--;
+              saveProgress();
+              force_full_refresh = true;
+              need_redraw = true;
+            }
+          }
+          btn5_press_start_time = 0;
+          btn5_hold_triggered = false;
+        }
+      }
+
+      if (btn4.pressed) { // Next Page
+        if (!pages.empty()) {
+          if (current_page_index < pages.size() - 1) {
+            current_page_index++;
+            saveProgress();
+            force_full_refresh = true;
+            need_redraw = true;
+          }
         }
       }
     }
@@ -204,8 +485,10 @@ void UIManager::loop() {
 
       if (current_state == STATE_HOME) {
         renderHome(current_status, &timeinfo);
-      } else {
+      } else if (current_state == STATE_MENU) {
         renderMenu();
+      } else if (current_state == STATE_READER) {
+        renderReader();
       }
 
       ESP_LOGI(TAG, "Updating Display (Partial: %d)",
