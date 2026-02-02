@@ -14,9 +14,18 @@ esp_err_t Scd4xManager::init(int sda_pin, int scl_pin) {
                                   (gpio_num_t)scl_pin));
 
   ESP_LOGI(TAG, "Initializing sensor...");
-  ESP_ERROR_CHECK(scd4x_wake_up(&dev));
-  ESP_ERROR_CHECK(scd4x_stop_periodic_measurement(&dev));
-  ESP_ERROR_CHECK(scd4x_reinit(&dev));
+  // Attempt to stop periodic measurement first to reset state (important for
+  // warm reboots) We ignore the error because it might fail if the sensor is
+  // already idle, or if comms are glitchy at start
+  scd4x_stop_periodic_measurement(&dev);
+  vTaskDelay(pdMS_TO_TICKS(500));
+
+  // Disable wake_up for now as it's typically for low-power mode exit, and
+  // stop_periodic handles the main active state scd4x_wake_up(&dev);
+
+  // Re-init to load settings
+  scd4x_reinit(&dev);
+  vTaskDelay(pdMS_TO_TICKS(20));
   ESP_LOGI(TAG, "Sensor initialized");
 
   uint16_t serial[3];

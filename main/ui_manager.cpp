@@ -96,10 +96,12 @@ void UIManager::renderHome(const DeviceStatus &status,
 
   // ppm Value
   display->setFont(&FreeSans9pt7b);
-  display->setCursor(217, 122);
   char co2_buf[16];
   snprintf(co2_buf, sizeof(co2_buf), "%dppm", status.co2_ppm);
-  display->print(co2_buf);
+  display->printRightAligned(292, 122, co2_buf);
+
+  // display->setCursor(262, 122);
+  // display->print("ppm");
 
   // Environmental Labels (T, H, A)
   display->setFont(NULL);
