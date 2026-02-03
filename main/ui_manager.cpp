@@ -4,6 +4,7 @@
 #include "freertos/task.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "scd4x_manager.hpp"
 #include "storage_manager.h"
 #include "ui_assets.hpp"
 #include <stdio.h>
@@ -19,8 +20,10 @@
 static const char *TAG = "UIManager";
 
 // Menu Items
-static const char *menu_items[] = {"Back", "Refresh", "Reboot", "Reader"};
-static const int menu_item_count = 4;
+static const char *menu_items[] = {
+    "Back",   "Refresh", "SCD41 Toggle ASC", "SCD41 FRC 430ppm",
+    "Reboot", "Reader",  "Factory Reset"};
+static const int menu_item_count = 7;
 
 // Compatibility defines
 #define GxEPD_BLACK GFX_BLACK
@@ -55,9 +58,11 @@ inline GFXglyph *pgm_read_glyph_ptr(const GFXfont *gfxFont, uint8_t c) {
 #endif
 }
 
-UIManager::UIManager(Adafruit_SSD1680 *display, StorageManager *storageManager)
+UIManager::UIManager(Adafruit_SSD1680 *display, StorageManager *storageManager,
+                     Scd4xManager *scd4xManager)
     : display(display), storageManager(storageManager),
-      current_state(STATE_HOME), selected_menu_index(0), current_page_index(0) {
+      scd4xManager(scd4xManager), current_state(STATE_HOME),
+      selected_menu_index(0), asc_enabled(false), current_page_index(0) {
   btn4 = {false, false};
   btn5 = {false, false};
   btn5_press_start_time = 0;
@@ -171,8 +176,9 @@ void UIManager::renderMenu() {
   display->print("Menu");
 
   // Items
-  int start_y = 50;
-  int line_height = 25;
+  display->setFont(&FreeSans7pt7b);
+  int start_y = 38;
+  int line_height = 15;
 
   for (int i = 0; i < menu_item_count; i++) {
     display->setCursor(20, start_y + (i * line_height));
@@ -182,7 +188,14 @@ void UIManager::renderMenu() {
     } else {
       display->print("  ");
     }
-    display->print(menu_items[i]);
+
+    if (i == 2) { // ASC Item
+      char asc_buf[32];
+      snprintf(asc_buf, sizeof(asc_buf), "ASC: %s", asc_enabled ? "ON" : "OFF");
+      display->print(asc_buf);
+    } else {
+      display->print(menu_items[i]);
+    }
   }
 }
 
@@ -400,6 +413,10 @@ void UIManager::loop() {
         ESP_LOGI(TAG, "Entering Menu");
         current_state = STATE_MENU;
         selected_menu_index = 0;
+        // Fetch ASC status once when entering menu
+        if (scd4xManager) {
+          scd4xManager->getASCStatus(&asc_enabled);
+        }
         need_redraw = true;
       }
 
@@ -423,11 +440,26 @@ void UIManager::loop() {
           force_full_refresh = true;           // Next draw will be full
           current_state = STATE_HOME;
           need_redraw = true;
-        } else if (selected_menu_index == 2) { // Reboot
+        } else if (selected_menu_index == 2) { // SCD41 Toggle ASC
+          if (scd4xManager)
+            scd4xManager->toggleASC();
+          current_state = STATE_HOME;
+          need_redraw = true;
+        } else if (selected_menu_index == 3) { // SCD41 FRC 430ppm
+          if (scd4xManager)
+            scd4xManager->performFRC(430);
+          current_state = STATE_HOME;
+          need_redraw = true;
+        } else if (selected_menu_index == 4) { // Reboot
           esp_restart();
-        } else if (selected_menu_index == 3) { // Reader
+        } else if (selected_menu_index == 5) { // Reader
           current_state = STATE_READER;
           loadProgress(); // Load saved page
+          need_redraw = true;
+        } else if (selected_menu_index == 6) { // Factory Reset
+          if (scd4xManager)
+            scd4xManager->performFactoryReset();
+          current_state = STATE_HOME;
           need_redraw = true;
         }
       }

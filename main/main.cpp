@@ -101,7 +101,7 @@ extern "C" void app_main(void) {
   }
 
   // Create Display Task via UIManager
-  static UIManager uiManager(display, &storageManager);
+  static UIManager uiManager(display, &storageManager, &scd4xManager);
   uiManager.start();
 
   ESP_LOGI(TAG, "UI Manager started, app_main exiting.");
