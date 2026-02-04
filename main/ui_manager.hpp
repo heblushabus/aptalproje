@@ -8,10 +8,12 @@
 #include <vector>
 
 class StorageManager;
+class Scd4xManager;
 
 class UIManager {
 public:
-  UIManager(Adafruit_SSD1680 *display, StorageManager *storageManager);
+  UIManager(Adafruit_SSD1680 *display, StorageManager *storageManager,
+            Scd4xManager *scd4xManager);
 
   // Start the UI task
   void start();
@@ -38,10 +40,12 @@ private:
   // Members
   Adafruit_SSD1680 *display;
   StorageManager *storageManager;
+  Scd4xManager *scd4xManager;
 
   enum AppState { STATE_HOME, STATE_MENU, STATE_READER };
   AppState current_state;
   int selected_menu_index;
+  bool asc_enabled;
 
   // Reader State
   std::vector<std::string> pages;

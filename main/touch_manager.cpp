@@ -9,7 +9,6 @@
 static const char *TAG = "TouchManager";
 
 #define TOUCH_BUTTON_4_CHAN_ID 4
-#define TOUCH_BUTTON_4_CHAN_ID 4
 #define BUTTON_GPIO_0 GPIO_NUM_0
 
 // Callbacks
@@ -141,7 +140,7 @@ esp_err_t TouchManager::init() {
 
   // Set threshold to 2% (0.02) of reference.
   // Ensure at least some minimum threshold
-  uint32_t thresh = (uint32_t)(benchmark_val * 0.1);
+  uint32_t thresh = (uint32_t)(benchmark_val * 0.15);
   if (thresh < 500)
     thresh = 500; // Minimum threshold floor
 
