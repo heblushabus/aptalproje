@@ -131,17 +131,10 @@ esp_err_t Scd4xManager::performSelfTest(bool &malfunction) {
 
   esp_err_t err = scd4x_perform_self_test(&dev, &malfunction);
   if (err == ESP_OK) {
-    // Datasheet says 10,000 ms execution time
+    // Datasheet specifies a self-test execution time of ~10 000 ms; wait before
+    // restarting periodic measurement to ensure the sensor has fully completed
+    // the test, even if the driver already blocks internally.
     vTaskDelay(pdMS_TO_TICKS(10000));
-    // NOTE: scd4x_perform_self_test in driver might already deal with wait?
-    // Checking scd4x.c usually reveals it waits. But scd4x.h wrapper is opaque.
-    // Usually these drivers block or we need to wait.
-    // Given I can't see .c, I will assume I might need to wait if the function
-    // returns early. However, usually "perform_self_test" implies it runs the
-    // test and returns result. If the function returns immediately, we aren't
-    // getting the result. Most likely the driver function blocks for the
-    // duration. We will assume the driver handles the I2C clock stretching or
-    // delay.
     ESP_LOGI(TAG, "Self test result: %s", malfunction ? "Malfunction" : "OK");
   } else {
     ESP_LOGE(TAG, "Self test command failed");
