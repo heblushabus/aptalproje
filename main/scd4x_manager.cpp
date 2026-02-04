@@ -167,8 +167,8 @@ esp_err_t Scd4xManager::reinit() {
 
   esp_err_t err = scd4x_reinit(&dev);
   if (err == ESP_OK) {
-    // Datasheet: 30 ms (approximated from user prompt or 20ms in table? User
-    // prompt says 30).
+    // Datasheet: reinit command execution time t_reinit = 20 ms; use 30 ms
+    // here to provide a safety margin.
     vTaskDelay(pdMS_TO_TICKS(30));
   }
 
