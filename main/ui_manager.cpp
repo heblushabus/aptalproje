@@ -587,11 +587,6 @@ void UIManager::loop() {
       if (btn19.pressed) {
         // Toggle Graph Mode
         current_graph_mode = (current_graph_mode == GRAPH_CO2) ? GRAPH_ALTITUDE : GRAPH_CO2;
-
-        // Force measurement update
-        if (scd4xManager) scd4xManager->forceMeasurement();
-        if (bmp580Manager) bmp580Manager->forceMeasurement();
-
         need_redraw = true;
       }
 
@@ -599,7 +594,6 @@ void UIManager::loop() {
       // Or if we forced a redraw via buttons
       if (current_status.last_env_update_us > last_ui_update) {
         need_redraw = true;
-        ESP_LOGI(TAG, "New environmental data received, redrawing UI.");
       }
     } else if (current_state == STATE_MENU) {
       if (btn19.pressed) {

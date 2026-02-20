@@ -41,7 +41,6 @@ void CommonData::setEnvironmental(int co2, float temp, float hum) {
     }
     xSemaphoreGive(mutex);
   }
-  notifyUI();
 }
 
 void CommonData::setBmpData(float pressure, float temp, float alt) {
@@ -58,7 +57,6 @@ void CommonData::setBmpData(float pressure, float temp, float alt) {
     }
     xSemaphoreGive(mutex);
   }
-  notifyUI();
 }
 
 void CommonData::setAltitudeOffset(float offset) {

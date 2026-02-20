@@ -160,6 +160,13 @@ esp_err_t Scd4xManager::performFactoryReset() {
   return err;
 }
 
+void Scd4xManager::forceMeasurement() {
+    // In periodic mode, we can't force a measurement faster than the period.
+    // But we could potentially stop and start, or just log.
+    // For now, we'll just log that it was requested.
+    ESP_LOGI(TAG, "Force measurement requested (no-op in periodic mode)");
+}
+
 esp_err_t Scd4xManager::reinit() {
   ESP_LOGI(TAG, "Reinitializing sensor...");
   scd4x_stop_periodic_measurement(&dev);

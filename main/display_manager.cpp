@@ -93,11 +93,17 @@ void Adafruit_SSD1680::display(bool partial) {
     // 2. Refresh Display
     epaper_panel_refresh_screen(panel_handle);
 
-    // 3. Write to Previous RAM (0x26) - full mode (writes both)
+    // 3. Write to Previous RAM (0x26) - full mode (writes both 0x24 and 0x26)
     // This ensures 0x26 matches the new state for the next comparison
     epaper_panel_set_refresh_mode(panel_handle, true);
     esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, EPD_WIDTH, EPD_HEIGHT,
                               buffer);
+    
+    // Explicitly set back to partial mode - IMPORTANT
+    epaper_panel_set_refresh_mode(panel_handle, false);
+    
+    // Safety delay to allow controller to settle after write
+    // vTaskDelay(pdMS_TO_TICKS(50));
   } else {
     epaper_panel_set_refresh_mode(panel_handle, true); // Full
     esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, EPD_WIDTH, EPD_HEIGHT,
