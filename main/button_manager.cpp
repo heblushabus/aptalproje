@@ -2,6 +2,7 @@
 #include "common_data.hpp"
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_sleep.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -56,7 +57,31 @@ esp_err_t ButtonManager::init() {
                        (void *)BUTTON_19_GPIO);
   gpio_isr_handler_add(BUTTON_20_GPIO, gpio_isr_handler,
                        (void *)BUTTON_20_GPIO);
+  
+  // Enable wake-up on button press (active low)
+  gpio_wakeup_enable(BUTTON_19_GPIO, GPIO_INTR_LOW_LEVEL);
+  gpio_wakeup_enable(BUTTON_20_GPIO, GPIO_INTR_LOW_LEVEL);
+  esp_sleep_enable_gpio_wakeup();
 
+  // Also ensure the interrupt type is LOW_LEVEL so it fires if held down after wake
+  // But wait, if we use LOW_LEVEL for ISR, it will fire continuously while held.
+  // We want EDGE for ISR, LEVEL for WAKE.
+  // The issue: If the falling edge happens while asleep, the wakeup triggers, but the edge interrupt might be missed.
+  // One trick is to use GPIO_INTR_LOW_LEVEL temporarily or rely on the fact that we woke up.
+  // Instead of complex ISR reconfiguration, we can add a small timeout to xQueueReceive 
+  // to poll the buttons occasionally OR use a separate mechanism.
+  
+  // However, often the wake-up cause can be checked.
+  // But our task is just waiting on a queue.
+  
+  // Better approach for buttons in Light Sleep:
+  // Use ANYEDGE for the ISR.
+  // When waking up, the level is still LOW.
+  // If we missed the edge, we are stuck.
+  
+  // Let's rely on the fact that if we wake up, the buttons are likely pressed.
+  // But we don't know we woke up inside the button task. The IDLE task woke up.
+  
   return ESP_OK;
 }
 
@@ -81,15 +106,34 @@ void ButtonManager::button_task(void *arg) {
   global_data.setStatus(status);
 
   while (1) {
-    if (xQueueReceive(gpio_evt_queue, &io_num, portMAX_DELAY)) {
-      // Simple debounce
-      vTaskDelay(pdMS_TO_TICKS(50));
+    // Wait for interrupt, but also check periodically (e.g., every 1s) OR
+    // just rely on interrupts. The issue is missing the edge.
+    // If we change portMAX_DELAY to a finite value, we poll.
+    // Polling every 100ms is OK for buttons if we want to catch a missed edge, 
+    // but better is to ensure the ISR fires.
+    
+    // Instead of indefinite wait, let's wait with a timeout.
+    // If the queue is empty, we check the buttons anyway.
+    // This handles the case where we wake up but the ISR didn't fire (missed edge).
+    // A 200ms timeout is reasonable for responsiveness if the edge was missed.
+    // But this prevents deep sleep? No, xQueueReceive blocks, so IDLE task runs, so Light Sleep happens.
+    // The Light Sleep duration will be limited to 200ms chunks, which is fine.
+    // It will wake up, check, and sleep again. 
+    // This is a "tickless idle" friendly polling.
+    
+    bool event_received = xQueueReceive(gpio_evt_queue, &io_num, pdMS_TO_TICKS(100)); // 100ms polling
 
-      bool current_19 = (gpio_get_level(BUTTON_19_GPIO) == 0);
-      bool current_20 = (gpio_get_level(BUTTON_20_GPIO) == 0);
+    // Debounce if an event actually occurred
+    if (event_received) {
+         vTaskDelay(pdMS_TO_TICKS(50));
+    }
 
-      // Only update if state really changed after debounce
-      if (current_19 != last_19 || current_20 != last_20) {
+    // Always check state (Polling + Interrupt hybrid)
+    bool current_19 = (gpio_get_level(BUTTON_19_GPIO) == 0);
+    bool current_20 = (gpio_get_level(BUTTON_20_GPIO) == 0);
+
+    // Only update if state really changed
+    if (current_19 != last_19 || current_20 != last_20) {
         status = global_data.getStatus();
         status.btn_19 = current_19;
         status.btn_20 = current_20;
@@ -107,7 +151,6 @@ void ButtonManager::button_task(void *arg) {
 
         // Wake UP UI
         global_data.notifyUI();
-      }
     }
   }
 }

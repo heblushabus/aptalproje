@@ -121,7 +121,7 @@ esp_err_t Bmp580Manager::init(int sda_pin, int scl_pin) {
         return ESP_FAIL;
     }
 
-    err = bmp5_set_power_mode(BMP5_POWERMODE_NORMAL, &bmp5_dev);
+    err = bmp5_set_power_mode(BMP5_POWERMODE_STANDBY, &bmp5_dev);
     if(err != BMP5_OK) {
         ESP_LOGE(TAG, "Failed to set power mode");
         return ESP_FAIL;
@@ -138,10 +138,20 @@ void Bmp580Manager::task(void *pvParameters) {
     // Ensure we tell the driver that pressure is enabled so it converts it
     osr_odr_press_cfg.press_en = BMP5_ENABLE; 
 
+    // Wait for initial notification (or start immediately)
+    // Wait for task notification from SCD4x or trigger
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
     // Static flag for taring at boot
     static bool first_reading = true;
     
     while (1) {
+        // Trigger Forced measurement
+        bmp5_set_power_mode(BMP5_POWERMODE_FORCED, &manager->bmp5_dev);
+        
+        // Wait for measurement to complete (approx 50-100ms for high OSR)
+        vTaskDelay(pdMS_TO_TICKS(100));
+
         int8_t rslt = bmp5_get_sensor_data(&data, &osr_odr_press_cfg, &manager->bmp5_dev);
         
         if (rslt == BMP5_OK) {
@@ -161,21 +171,25 @@ void Bmp580Manager::task(void *pvParameters) {
             ESP_LOGI(TAG, "Pressure: %f Pa, Temp: %f C, Alt: %f m", pressure, data.temperature, altitude);
             
             global_data.setBmpData(pressure, data.temperature, altitude);
-            //global_data.notifyUI();
+            
+            // Notify UI only after BMP data is updated (synchronized with SCD4x)
+            global_data.notifyUI();
         } else {
             ESP_LOGE(TAG, "Failed to read data");
         }
         
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        // Wait for next trigger
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     }
 }
 
 void Bmp580Manager::start() {
-    xTaskCreate(task, "bmp580_task", 4096, this, 5, NULL);
+    xTaskCreate(task, "bmp580_task", 4096, this, 5, &taskHandle);
 }
 
 void Bmp580Manager::forceMeasurement() {
-    ESP_LOGI(TAG, "Force measurement requested");
-    // If we wanted to force a read, we could notify the task.
-    // For now, simple logging is sufficient to pass linking.
+    // Notify the task to take a measurement
+    if (taskHandle != NULL) {
+        xTaskNotifyGive(taskHandle);
+    }
 }

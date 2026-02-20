@@ -1,4 +1,5 @@
 #include "scd4x_manager.hpp"
+#include "bmp580_manager.hpp"
 #include "common_data.hpp"
 #include "esp_log.h"
 #include <string.h>
@@ -44,9 +45,9 @@ esp_err_t Scd4xManager::init(int sda_pin, int scl_pin) {
 }
 
 void Scd4xManager::start() {
-  // Start periodic measurements
-  ESP_ERROR_CHECK(scd4x_start_periodic_measurement(&dev));
-  ESP_LOGI(TAG, "Periodic measurements started");
+  // Start low power periodic measurements (30s interval)
+  ESP_ERROR_CHECK(scd4x_start_low_power_periodic_measurement(&dev));
+  ESP_LOGI(TAG, "Low power periodic measurements started");
 
   xTaskCreate(task, "scd4x_task", 4096, this, 5, NULL);
 }
@@ -69,7 +70,7 @@ esp_err_t Scd4xManager::toggleASC() {
     }
   }
 
-  scd4x_start_periodic_measurement(&dev);
+  scd4x_start_low_power_periodic_measurement(&dev);
   return err;
 }
 
@@ -80,7 +81,7 @@ esp_err_t Scd4xManager::getASCStatus(bool *enabled) {
 
   esp_err_t err = scd4x_get_automatic_self_calibration(&dev, enabled);
 
-  scd4x_start_periodic_measurement(&dev);
+  scd4x_start_low_power_periodic_measurement(&dev);
   return err;
 }
 
@@ -103,7 +104,7 @@ esp_err_t Scd4xManager::performFRC(uint16_t target_ppm) {
     }
   }
 
-  scd4x_start_periodic_measurement(&dev);
+  scd4x_start_low_power_periodic_measurement(&dev);
   return err;
 }
 
@@ -120,7 +121,7 @@ esp_err_t Scd4xManager::getSerialNumber(uint16_t &w0, uint16_t &w1,
 
   esp_err_t err = scd4x_get_serial_number(&dev, &w0, &w1, &w2);
 
-  scd4x_start_periodic_measurement(&dev);
+  scd4x_start_low_power_periodic_measurement(&dev);
   return err;
 }
 
@@ -140,7 +141,7 @@ esp_err_t Scd4xManager::performSelfTest(bool &malfunction) {
     ESP_LOGE(TAG, "Self test command failed");
   }
 
-  scd4x_start_periodic_measurement(&dev);
+  scd4x_start_low_power_periodic_measurement(&dev);
   return err;
 }
 
@@ -156,7 +157,7 @@ esp_err_t Scd4xManager::performFactoryReset() {
     ESP_LOGI(TAG, "Factory reset complete");
   }
 
-  scd4x_start_periodic_measurement(&dev);
+  scd4x_start_low_power_periodic_measurement(&dev);
   return err;
 }
 
@@ -179,7 +180,7 @@ esp_err_t Scd4xManager::reinit() {
     vTaskDelay(pdMS_TO_TICKS(30));
   }
 
-  scd4x_start_periodic_measurement(&dev);
+  scd4x_start_low_power_periodic_measurement(&dev);
   return err;
 }
 /*AAAAAAAA
@@ -189,7 +190,7 @@ esp_err_t Scd4xManager::getSensorVariant(uint16_t &variant) {
 
   esp_err_t err = scd4x_get_sensor_variant(&dev, &variant);
 
-  scd4x_start_periodic_measurement(&dev);
+  scd4x_start_low_power_periodic_measurement(&dev);
   return err;
 }*/
 
@@ -234,13 +235,23 @@ void Scd4xManager::task(void *pvParameters) {
     ESP_LOGI(TAG, "CO2: %u ppm, Temp: %.2f C, Hum: %.2f %%", co2, temperature,
              humidity);
 
+    // Update Common Data
     global_data.setEnvironmental(co2, temperature, humidity);
     global_data.addCO2Reading(co2);
-    global_data.notifyUI();
 
+    // Trigger BMP580 measurement if available
+    if (self->bmp580Manager) {
+      self->bmp580Manager->forceMeasurement();
+      // We rely on BMP580 to trigger UI update for synchronization.
+    } else {
+      global_data.notifyUI();
+    }
+    
     // Wait for the next measurement cycle
-    // SCD4x update interval is ~5 seconds. We wait 4900ms to minimize polling.
+    // SCD4x low power periodic measurement interval is ~30 seconds.
+    // We wait 29500ms to minimize polling.
     // This allows the CPU to stay in Light Sleep for almost the entire duration.
-    vTaskDelay(pdMS_TO_TICKS(4900));
+    vTaskDelay(pdMS_TO_TICKS(29500));
   }
 }
+
