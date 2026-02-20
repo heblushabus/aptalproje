@@ -5,7 +5,7 @@
 
 static const char *TAG = "BatteryManager";
 
-#define BATTERY_GPIO 0
+#define BATTERY_GPIO 1
 #define BATTERY_ATTEN ADC_ATTEN_DB_12
 
 BatteryManager::BatteryManager() {}
@@ -72,6 +72,7 @@ esp_err_t BatteryManager::init() {
   adc_unit_t unit_id;
   adc_channel_t channel;
   ESP_ERROR_CHECK(adc_oneshot_io_to_channel(BATTERY_GPIO, &unit_id, &channel));
+  ESP_LOGI(TAG, "BATTERY_GPIO %d maps to Unit %d, Channel %d", BATTERY_GPIO, unit_id, channel);
   this->adc_channel = channel; // Store for task
 
   adc_oneshot_unit_init_cfg_t init_config = {
@@ -89,6 +90,8 @@ esp_err_t BatteryManager::init() {
 
   calibrated =
       adc_calibration_init(unit_id, channel, BATTERY_ATTEN, &cali_handle);
+      
+  ESP_LOGI(TAG, "Battery Manager Initialized. Calibrated: %s", calibrated ? "Yes" : "No");
 
   return ESP_OK;
 }
@@ -113,11 +116,12 @@ void BatteryManager::battery_task(void *pvParameters) {
     } else {
       // Fallback estimation if uncalibrated: V = Raw * Vmax / RawMax
       // For 11dB (3.3V range approx) and 12-bit (4095)
+      // On C6, voltage might be slightly different range depending on atten
+      // ADC_ATTEN_DB_12 is usually up to 3300mV or so.
       voltage_mv = adc_raw * 3300 / 4095;
     }
 
-    // Multiply by 2 as per hardware divider
-    float battery_v = (voltage_mv * 2.0f) / 1000.0f;
+    float battery_v = (voltage_mv * 2.0) / 1000.0f;
 
     // Update shared state
     DeviceStatus status = global_data.getStatus();
@@ -127,6 +131,6 @@ void BatteryManager::battery_task(void *pvParameters) {
     ESP_LOGD(TAG, "Battery: Raw %d, %d mV, %.2f V", adc_raw, voltage_mv,
              battery_v);
 
-    vTaskDelay(pdMS_TO_TICKS(60000)); // Update every 60 seconds
+    vTaskDelay(pdMS_TO_TICKS(30000)); // Update every 30 seconds
   }
 }

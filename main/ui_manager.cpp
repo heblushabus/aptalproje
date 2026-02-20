@@ -5,10 +5,13 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "scd4x_manager.hpp"
+#include "bmp580_manager.hpp"
 #include "storage_manager.h"
 #include "ui_assets.hpp"
 #include <stdio.h>
 #include <time.h>
+#include <cmath>
+#include <math.h>
 
 // Fonts
 
@@ -22,8 +25,8 @@ static const char *TAG = "UIManager";
 // Menu Items
 static const char *menu_items[] = {
     "Back",   "Refresh", "SCD41 Toggle ASC", "SCD41 FRC 430ppm",
-    "Reboot", "Reader",  "Factory Reset"};
-static const int menu_item_count = 7;
+    "Reboot", "Reader",  "Factory Reset", "Zero Altitude"};
+static const int menu_item_count = 8;
 
 // Compatibility defines
 #define GxEPD_BLACK GFX_BLACK
@@ -59,9 +62,10 @@ inline GFXglyph *pgm_read_glyph_ptr(const GFXfont *gfxFont, uint8_t c) {
 }
 
 UIManager::UIManager(Adafruit_SSD1680 *display, StorageManager *storageManager,
-                     Scd4xManager *scd4xManager)
+                     Scd4xManager *scd4xManager, Bmp580Manager *bmp580Manager)
     : display(display), storageManager(storageManager),
-      scd4xManager(scd4xManager), current_state(STATE_HOME),
+      scd4xManager(scd4xManager), bmp580Manager(bmp580Manager), current_state(STATE_HOME),
+      current_graph_mode(GRAPH_CO2),
       selected_menu_index(0), asc_enabled(false), current_page_index(0) {
   btn19 = {false, false};
   btn20 = {false, false};
@@ -94,7 +98,7 @@ void UIManager::renderHome(const DeviceStatus &status,
   // CO2 Label
   display->setFont(NULL); // Default font
   display->setCursor(196, 114);
-  display->print("CO :");
+  display->print(status.scd_measuring ? "CO *" : "CO :");
 
   display->setFont(&Picopixel);
   display->setCursor(208, 122);
@@ -135,6 +139,147 @@ void UIManager::renderHome(const DeviceStatus &status,
   display->setFont(&FreeSans18pt7b);
   display->printRightAligned(292, 78, time_str);
 
+  // CO2 Graph Overlay
+  if (current_graph_mode == GRAPH_CO2) {
+    std::vector<int> co2_history = global_data.getCO2History();
+    if (!co2_history.empty()) {
+      int g_h = 128; // Full height
+      int g_bottom = 128;
+      int end_x = 296 - 150; // Finish 150px from right
+
+
+      int min_val = 0;
+      int max_val = 3000;
+      int range = max_val - min_val;
+
+      // Draw reference lines
+      int y_400 = g_bottom - ((400 - min_val) * g_h / range);
+      int y_1000 = g_bottom - ((1000 - min_val) * g_h / range);
+      int y_2000 = g_bottom - ((2000 - min_val) * g_h / range);
+      
+      // Draw dotted lines across the screen
+      for (int x = 0; x < end_x; x += 4) {
+          if (y_400 >= 0 && y_400 < 128) display->drawPixel(x, y_400, GxEPD_BLACK);
+          if (y_1000 >= 0 && y_1000 < 128) display->drawPixel(x, y_1000, GxEPD_BLACK);
+          if (y_2000 >= 0 && y_2000 < 128) display->drawPixel(x, y_2000, GxEPD_BLACK);
+      }
+
+      // Draw labels with smallest font
+      display->setFont(&Picopixel);
+      display->setCursor(147, y_400 + 2);
+      display->print("400");
+      display->setCursor(147, y_1000 + 2);
+      display->print("1000");
+      display->setCursor(147, y_2000 + 2);
+      display->print("2000");
+
+      // Draw from right to left
+      for (size_t i = 0; i < co2_history.size(); i++) {
+        // Map index to X. 
+        // If history is full, latest (i=size-1) is at end_x
+        // x = end_x - (count - 1 - i)
+        int x = end_x - (co2_history.size() - 1 - i);
+        
+        if (x < 0) continue; // Clip left
+
+        // Map Value to Y (0 is top, 128 is bottom)
+        // We want higher values at top (lower Y)
+        // y = bottom - ((val - min) * height / range)
+        int val = co2_history[i];
+        if (val < min_val) val = min_val;
+        if (val > max_val) val = max_val;
+        
+        int y = g_bottom - ((val - min_val) * g_h / range);
+        if (y >= 128) y = 127;
+        if (y < 0) y = 0;
+
+        // Draw single pixel for each measurement
+        display->drawPixel(x, y, GxEPD_BLACK);
+      }
+    }
+  } else if (current_graph_mode == GRAPH_ALTITUDE) {
+      std::vector<float> alt_history = global_data.getAltitudeHistory();
+      if (!alt_history.empty()) {
+        int g_h = 128;
+        int g_bottom = 128;
+        int end_x = 296 - 150;
+        
+        // Auto-scale
+        float min_val = alt_history[0];
+        float max_val = alt_history[0];
+        for (float v : alt_history) {
+            if (v < min_val) min_val = v;
+            if (v > max_val) max_val = v;
+        }
+        
+        // Ensure some range
+        if (max_val - min_val < 5.0f) {
+            float center = (max_val + min_val) / 2.0f;
+            min_val = center - 2.5f;
+            max_val = center + 2.5f;
+        }
+        
+        float range = max_val - min_val;
+        
+        // Draw min/max labels
+        display->setFont(&Picopixel);
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%.0f", max_val);
+        display->setCursor(150, 5); // Top left area
+        display->print(buf);
+        
+        snprintf(buf, sizeof(buf), "%.0f", min_val);
+        display->setCursor(150, 126); // Bottom left area
+        display->print(buf);
+
+        // Draw reference lines for min/max
+        display->drawFastHLine(0, 0, end_x, GxEPD_BLACK);   // Max value line (top)
+        display->drawFastHLine(0, 127, end_x, GxEPD_BLACK); // Min value line (bottom)
+
+        // Draw integer lines
+        int start_grid = (int)std::ceil(min_val);
+        int end_grid = (int)std::floor(max_val);
+        
+        // Safety: If range is huge, don't draw every line. 
+        // Max 20 lines?
+        int step = 1;
+        while ((end_grid - start_grid) / step > 20) {
+            step++;
+        }
+
+        for (int v = start_grid; v <= end_grid; v++) {
+            if (v % step != 0) continue; // Skip if not on grid step
+
+            int y = g_bottom - (int)((v - min_val) * g_h / range);
+            if (y >= 0 && y < 128) {
+                if (v == 0) {
+                    display->drawFastHLine(0, y, end_x, GxEPD_BLACK);
+                } else {
+                    // Draw dotted line
+                     for (int x = 0; x < end_x; x += 4) {
+                        display->drawPixel(x, y, GxEPD_BLACK);
+                    }
+                }
+            }
+        }
+
+        for (size_t i = 0; i < alt_history.size(); i++) {
+            int x = end_x - (alt_history.size() - 1 - i);
+            if (x < 0) continue;
+            
+            float val = alt_history[i];
+            if (val < min_val) val = min_val;
+            if (val > max_val) val = max_val;
+            
+            int y = g_bottom - (int)((val - min_val) * g_h / range);
+            if (y >= 128) y = 127;
+            if (y < 0) y = 0;
+            
+            display->drawPixel(x, y, GxEPD_BLACK);
+        }
+      }
+  }
+
   // Bitmaps
   display->drawBitmap(40, 12, image_Layer_8_bits, 18, 19, GxEPD_BLACK);
 
@@ -146,23 +291,13 @@ void UIManager::renderHome(const DeviceStatus &status,
   display->print(bat_buf);
 
   display->drawBitmap(267, 37, image_battery_50_bits, 24, 16, GxEPD_BLACK);
-  display->drawBitmap(276, 5, image_choice_bullet_on_bits, 15, 16, GxEPD_BLACK);
-  display->drawBitmap(233, 1, image_ButtonUp_bits, 7, 4, GxEPD_BLACK);
-  display->drawBitmap(102, 1, image_ButtonUp_bits, 7, 4, GxEPD_BLACK);
-  display->drawBitmap(230, 6, image_stats_bits, 13, 11, GxEPD_BLACK);
-  display->drawBitmap(98, 4, image_menu_settings_sliders_two_bits, 14, 16,
+  //display->drawBitmap(276, 5, image_choice_bullet_on_bits, 15, 16, GxEPD_BLACK);
+  display->drawBitmap(283, 1, image_ButtonUp_bits, 7, 4, GxEPD_BLACK);
+  display->drawBitmap(162, 1, image_ButtonUp_bits, 7, 4, GxEPD_BLACK);
+  display->drawBitmap(280, 6, image_stats_bits, 13, 11, GxEPD_BLACK);
+  display->drawBitmap(158, 4, image_menu_settings_sliders_two_bits, 14, 16,
                       GxEPD_BLACK);
   display->drawBitmap(181, 108, image_check_bits, 12, 16, GxEPD_BLACK);
-
-  // Button Status
-  display->setFont(NULL);
-  display->setCursor(10, 115);
-  display->print("B19: ");
-  display->print(status.btn_19 ? "1" : "0");
-
-  display->setCursor(65, 115);
-  display->print("B20: ");
-  display->print(status.btn_20 ? "1" : "0");
 }
 
 void UIManager::renderMenu() {
@@ -198,6 +333,30 @@ void UIManager::renderMenu() {
       display->print(menu_items[i]);
     }
   }
+}
+
+void UIManager::renderTrimAltitudeMenu() {
+  display->clearBuffer();
+  display->setRotation(1);
+  display->setTextColor(GxEPD_BLACK);
+  display->setTextWrap(false);
+  
+  // Title
+  display->setFont(&FreeSans9pt7b);
+  display->setCursor(10, 20);
+  display->print("Zero Altitude");
+  
+  // Instructions
+  display->setFont(&FreeSans7pt7b);
+  display->setCursor(10, 50);
+  display->print("Set current altitude");
+  display->setCursor(10, 70);
+  display->print("to 0 meters?");
+  
+  display->setCursor(10, 100);
+  display->print("B20: Confirm");
+  display->setCursor(10, 115);
+  display->print("B19: Cancel");
 }
 
 void UIManager::saveProgress() {
@@ -418,16 +577,29 @@ void UIManager::loop() {
         ESP_LOGI(TAG, "Entering Menu");
         current_state = STATE_MENU;
         selected_menu_index = 0;
-        // Fetch ASC status once when entering menu
+        // Fetch ASC status from cache (fast)
         if (scd4xManager) {
-          scd4xManager->getASCStatus(&asc_enabled);
+          asc_enabled = scd4xManager->isASCEnabled();
         }
+        need_redraw = true;
+      }
+      
+      if (btn19.pressed) {
+        // Toggle Graph Mode
+        current_graph_mode = (current_graph_mode == GRAPH_CO2) ? GRAPH_ALTITUDE : GRAPH_CO2;
+
+        // Force measurement update
+        if (scd4xManager) scd4xManager->forceMeasurement();
+        if (bmp580Manager) bmp580Manager->forceMeasurement();
+
         need_redraw = true;
       }
 
       // Update only when new environmental data is available
+      // Or if we forced a redraw via buttons
       if (current_status.last_env_update_us > last_ui_update) {
         need_redraw = true;
+        ESP_LOGI(TAG, "New environmental data received, redrawing UI.");
       }
     } else if (current_state == STATE_MENU) {
       if (btn19.pressed) {
@@ -465,8 +637,47 @@ void UIManager::loop() {
             scd4xManager->performFactoryReset();
           current_state = STATE_HOME;
           need_redraw = true;
+        } else if (selected_menu_index == 7) { // Trim Altitude
+            current_state = STATE_TRIM_ALTITUDE;
+            trim_altitude_val = global_data.getStatus().altitude_offset;
+            need_redraw = true;
         }
       }
+    } else if (current_state == STATE_TRIM_ALTITUDE) {
+        if (btn19.pressed) {
+             // Cancel
+             current_state = STATE_HOME;
+             need_redraw = true;
+        }
+        
+        if (btn20.pressed) {
+            // Confirm Zeroing
+            DeviceStatus s = global_data.getStatus();
+            // s.altitude is currently displayed (raw + offset)
+            // We want new_displayed = 0
+            // 0 = raw + new_offset
+            // raw = s.altitude - s.altitude_offset
+            // new_offset = -raw = -(s.altitude - s.altitude_offset) = s.altitude_offset - s.altitude
+            
+            float new_offset = s.altitude_offset - s.altitude;
+            global_data.setAltitudeOffset(new_offset);
+            
+            // Clear history so the graph restarts from 0
+            global_data.clearAltitudeHistory();
+            
+            // To make the update immediate on display without waiting for next sensor reading:
+            // Update the stored altitude in CommonData to 0 IF we want instant feedback locally?
+            // Actually, setting offset will make the next setBmpData use it.
+            // But current stored 'altitude' is old (with old offset).
+            // We should ideally force an update or update the stored value.
+            // Let's rely on next sensor update (1s latency max).
+            // Or we can manually patch it.
+            global_data.setBmpData(s.pressure_pa, s.temp_bmp, s.altitude - s.altitude_offset); // Re-set with raw
+            
+            current_state = STATE_HOME;
+            need_redraw = true;
+        }
+        
     } else if (current_state == STATE_READER) {
       // Button 20 Logic: Hold for Exit, Click for Previous Page
       if (current_status.btn_20) { // Button is held down
@@ -516,6 +727,8 @@ void UIManager::loop() {
 
     // 3. Redraw if needed
     if (need_redraw || first_run) {
+      last_ui_update = esp_timer_get_time();
+
       time_t now;
       struct tm timeinfo;
       time(&now);
@@ -525,6 +738,8 @@ void UIManager::loop() {
         renderHome(current_status, &timeinfo);
       } else if (current_state == STATE_MENU) {
         renderMenu();
+      } else if (current_state == STATE_TRIM_ALTITUDE) {
+        renderTrimAltitudeMenu();
       } else if (current_state == STATE_READER) {
         renderReader();
       }
@@ -535,7 +750,6 @@ void UIManager::loop() {
 
       first_run = false;
       force_full_refresh = false;
-      last_ui_update = esp_timer_get_time();
     }
 
     // Handled by task notification wait

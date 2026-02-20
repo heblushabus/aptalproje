@@ -6,11 +6,15 @@
 #include <i2cdev.h>
 #include <scd4x.h>
 
+// Forward declaration
+class Bmp580Manager;
+
 class Scd4xManager {
 public:
   Scd4xManager();
   esp_err_t init(int sda_pin, int scl_pin);
   void start();
+  void setBmp580Manager(Bmp580Manager* manager) { bmp580Manager = manager; }
 
   esp_err_t toggleASC();
   esp_err_t getASCStatus(bool *enabled);
@@ -20,10 +24,14 @@ public:
   esp_err_t performSelfTest(bool &malfunction);
   esp_err_t performFactoryReset();
   esp_err_t reinit();
-  //esp_err_t getSensorVariant(uint16_t &variant);
+  void forceMeasurement();
+  bool isASCEnabled() const { return asc_enabled_cache; }
 
 private:
   static void task(void *pvParameters);
 
   i2c_dev_t dev;
+  TaskHandle_t taskHandle = nullptr;
+  Bmp580Manager* bmp580Manager = nullptr;
+  bool asc_enabled_cache = false;
 };

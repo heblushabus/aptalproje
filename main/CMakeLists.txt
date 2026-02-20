@@ -1,5 +1,5 @@
-idf_component_register(SRCS "scd4x_manager.cpp" "storage_manager.cpp" "ui_manager.cpp" "button_manager.cpp" "main.cpp" "display_manager.cpp" "network_manager.cpp" "common_data.cpp" "battery_manager.cpp"
+idf_component_register(SRCS "scd4x_manager.cpp" "storage_manager.cpp" "ui_manager.cpp" "button_manager.cpp" "main.cpp" "display_manager.cpp" "network_manager.cpp" "common_data.cpp" "battery_manager.cpp" "bmp580_manager.cpp"
                     INCLUDE_DIRS "."
-                    REQUIRES scd4x i2cdev esp_driver_spi esp_driver_gpio esp_lcd esp_lcd_ssd1680 Adafruit-GFX-Library-ESP-IDF esp_timer esp_wifi esp_event nvs_flash esp_netif lwip esp_adc)
+                    REQUIRES scd4x i2cdev esp_driver_spi esp_driver_gpio esp_lcd esp_lcd_ssd1680 Adafruit-GFX-Library-ESP-IDF esp_timer esp_wifi esp_event nvs_flash esp_netif lwip esp_adc BMP5_SensorAPI)
 
 littlefs_create_partition_image(storage ../littlefs_data FLASH_IN_PROJECT)

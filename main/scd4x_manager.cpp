@@ -227,12 +227,13 @@ void Scd4xManager::task(void *pvParameters) {
     ESP_LOGI(TAG, "CO2: %u ppm, Temp: %.2f C, Hum: %.2f %%", co2, temperature,
              humidity);
 
-    DeviceStatus status = global_data.getStatus();
-    global_data.setEnvironmental(co2, temperature, humidity, status.altitude);
+    global_data.setEnvironmental(co2, temperature, humidity);
+    global_data.addCO2Reading(co2);
     global_data.notifyUI();
 
-    // Wait a bit to avoid excessive polling right after reading
-    // Next sample will be ready in ~5 seconds
-    vTaskDelay(pdMS_TO_TICKS(4000));
+    // Wait for the next measurement cycle
+    // SCD4x update interval is ~5 seconds. We wait 4900ms to minimize polling.
+    // This allows the CPU to stay in Light Sleep for almost the entire duration.
+    vTaskDelay(pdMS_TO_TICKS(4900));
   }
 }

@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"name": "st7789 s3 demo",
+			"path": "../Documents/PlatformIO/Projects/st7789 s3 demo"
+		}
+	],
+	"settings": {}
+}

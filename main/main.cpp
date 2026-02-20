@@ -9,6 +9,7 @@
 #include "network_manager.hpp"
 #include "nvs_flash.h"
 #include "scd4x_manager.hpp"
+#include "bmp580_manager.hpp"
 #include "secrets.hpp"
 #include "storage_manager.h"
 #include "button_manager.hpp"
@@ -77,10 +78,20 @@ extern "C" void app_main(void) {
   // Initialize SCD4x (CO2 Sensor)
   static Scd4xManager scd4xManager;
   // SDA: 2, SCL: 3
-  if (scd4xManager.init(2, 3) == ESP_OK) {
+  if (scd4xManager.init(2,3) == ESP_OK) {
     scd4xManager.start();
   } else {
     ESP_LOGE(TAG, "SCD4x initialization failed!");
+  }
+
+  // Initialize BMP580
+  static Bmp580Manager bmp580Manager;
+  if (bmp580Manager.init(2,3) == ESP_OK) {
+    bmp580Manager.start();
+    // Link them
+    scd4xManager.setBmp580Manager(&bmp580Manager);
+  } else {
+    ESP_LOGE(TAG, "BMP580 initialization failed!");
   }
 
   // --- Network Setup ---
@@ -93,23 +104,34 @@ extern "C" void app_main(void) {
   if (timeinfo.tm_year < (2026 - 1900)) {
     NetworkManager network;
     ESP_LOGI(TAG, "Time not set. Connecting to WiFi...");
+    
     if (network.init(WIFI_SSID, WIFI_PASS) == ESP_OK) {
       ESP_LOGI(TAG, "Syncing time...");
-      network.syncTime();
-      network.deinit(); // Power off WiFi
-
-      // Set timezone to UTC+3 (Istanbul/Moscow)
+      
+      // Set timezone BEFORE sync to ensure correct interpretation if needed, 
+      // although SNTP works in UTC.
       setenv("TZ", "TRT-3", 1);
       tzset();
+      
+      if (network.syncTime() == ESP_OK) {
+         // Print time to verify
+         time(&now);
+         localtime_r(&now, &timeinfo);
+         ESP_LOGI(TAG, "Time verified: %s", asctime(&timeinfo));
+      }
+      
+      network.deinit(); // Power off WiFi
     } else {
       ESP_LOGW(TAG, "WiFi connection failed, using default time.");
     }
   } else {
     ESP_LOGI(TAG, "System time already set, skipping network.");
+    setenv("TZ", "TRT-3", 1);
+    tzset();
   }
 
   // Create Display Task via UIManager
-  static UIManager uiManager(display, &storageManager, &scd4xManager);
+  static UIManager uiManager(display, &storageManager, &scd4xManager, &bmp580Manager);
   uiManager.start();
 
   ESP_LOGI(TAG, "UI Manager started, app_main exiting.");
