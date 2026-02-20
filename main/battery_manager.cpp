@@ -5,7 +5,7 @@
 
 static const char *TAG = "BatteryManager";
 
-#define BATTERY_GPIO 9
+#define BATTERY_GPIO 0
 #define BATTERY_ATTEN ADC_ATTEN_DB_12
 
 BatteryManager::BatteryManager() {}
@@ -76,7 +76,7 @@ esp_err_t BatteryManager::init() {
 
   adc_oneshot_unit_init_cfg_t init_config = {
       .unit_id = unit_id,
-      .clk_src = ADC_RTC_CLK_SRC_DEFAULT,
+      .clk_src = ADC_DIGI_CLK_SRC_DEFAULT,
       .ulp_mode = ADC_ULP_MODE_DISABLE,
   };
   ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config, &adc_handle));
@@ -127,6 +127,6 @@ void BatteryManager::battery_task(void *pvParameters) {
     ESP_LOGD(TAG, "Battery: Raw %d, %d mV, %.2f V", adc_raw, voltage_mv,
              battery_v);
 
-    vTaskDelay(pdMS_TO_TICKS(2000)); // Update every 2 seconds
+    vTaskDelay(pdMS_TO_TICKS(60000)); // Update every 60 seconds
   }
 }

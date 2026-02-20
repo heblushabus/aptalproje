@@ -2,6 +2,7 @@
 #include "common_data.hpp"
 #include "display_manager.hpp"
 #include "esp_log.h"
+#include "esp_pm.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -10,7 +11,7 @@
 #include "scd4x_manager.hpp"
 #include "secrets.hpp"
 #include "storage_manager.h"
-#include "touch_manager.hpp"
+#include "button_manager.hpp"
 #include "ui_manager.hpp"
 #include <i2cdev.h>
 #include <stdio.h>
@@ -18,7 +19,14 @@
 
 static const char *TAG = "main";
 
+esp_pm_config_t pm_config{
+  .max_freq_mhz = 160,
+  .min_freq_mhz = 40,
+  .light_sleep_enable = true
+};
+
 extern "C" void app_main(void) {
+  esp_pm_configure(&pm_config);
   ESP_LOGI(TAG, "Starting up...");
 
   // Initialize NVS
@@ -43,12 +51,12 @@ extern "C" void app_main(void) {
     return;
   }
 
-  // Initialize Touch
-  static TouchManager touchManager;
-  if (touchManager.init() == ESP_OK) {
-    touchManager.start();
+  // Initialize Buttons
+  static ButtonManager buttonManager;
+  if (buttonManager.init() == ESP_OK) {
+    buttonManager.start();
   } else {
-    ESP_LOGE(TAG, "Touch initialization failed!");
+    ESP_LOGE(TAG, "Button initialization failed!");
   }
 
   // Initialize Battery
@@ -68,8 +76,8 @@ extern "C" void app_main(void) {
 
   // Initialize SCD4x (CO2 Sensor)
   static Scd4xManager scd4xManager;
-  // SDA: 47, SCL: 21
-  if (scd4xManager.init(47, 21) == ESP_OK) {
+  // SDA: 2, SCL: 3
+  if (scd4xManager.init(2, 3) == ESP_OK) {
     scd4xManager.start();
   } else {
     ESP_LOGE(TAG, "SCD4x initialization failed!");

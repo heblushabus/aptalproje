@@ -63,10 +63,10 @@ UIManager::UIManager(Adafruit_SSD1680 *display, StorageManager *storageManager,
     : display(display), storageManager(storageManager),
       scd4xManager(scd4xManager), current_state(STATE_HOME),
       selected_menu_index(0), asc_enabled(false), current_page_index(0) {
-  btn4 = {false, false};
-  btn5 = {false, false};
-  btn5_press_start_time = 0;
-  btn5_hold_triggered = false;
+  btn19 = {false, false};
+  btn20 = {false, false};
+  btn20_press_start_time = 0;
+  btn20_hold_triggered = false;
 }
 
 void UIManager::start() {
@@ -75,6 +75,7 @@ void UIManager::start() {
 
 void UIManager::taskEntry(void *param) {
   UIManager *instance = (UIManager *)param;
+  global_data.registerUITask(xTaskGetCurrentTaskHandle());
   instance->loop();
 }
 
@@ -86,7 +87,7 @@ void UIManager::updateButtonState(ButtonState &btn, bool current) {
 void UIManager::renderHome(const DeviceStatus &status,
                            const struct tm *timeinfo) {
   display->clearBuffer();
-  display->setRotation(3); // Landscape (296x128)
+  display->setRotation(1); // Landscape (296x128)
   display->setTextColor(GxEPD_BLACK);
   display->setTextWrap(false);
 
@@ -153,20 +154,20 @@ void UIManager::renderHome(const DeviceStatus &status,
                       GxEPD_BLACK);
   display->drawBitmap(181, 108, image_check_bits, 12, 16, GxEPD_BLACK);
 
-  // Touch Status
+  // Button Status
   display->setFont(NULL);
   display->setCursor(10, 115);
-  display->print("T4: ");
-  display->print(status.touch_4 ? "1" : "0");
+  display->print("B19: ");
+  display->print(status.btn_19 ? "1" : "0");
 
-  display->setCursor(60, 115);
-  display->print("T5: ");
-  display->print(status.touch_5 ? "1" : "0");
+  display->setCursor(65, 115);
+  display->print("B20: ");
+  display->print(status.btn_20 ? "1" : "0");
 }
 
 void UIManager::renderMenu() {
   display->clearBuffer();
-  display->setRotation(3);
+  display->setRotation(1);
   display->setTextColor(GxEPD_BLACK);
   display->setTextWrap(false);
 
@@ -256,7 +257,7 @@ void UIManager::paginateContent(const std::string &content) {
   // 128px height / ~11px line height = ~11 lines. Let's try 10.
   const int MAX_LINES_PER_PAGE = 7;
   // Width: 296px. Margin ~3-3px. Safe width = 290px.
-  const int MAX_LINE_WIDTH = 296;
+  const int MAX_LINE_WIDTH = 286;
 
   std::string current_page_str;
   int current_lines = 0;
@@ -351,7 +352,7 @@ void UIManager::paginateContent(const std::string &content) {
 
 void UIManager::renderReader() {
   display->clearBuffer();
-  display->setRotation(3);
+  display->setRotation(1);
   display->setTextColor(GxEPD_BLACK);
   display->setTextWrap(true);
 
@@ -380,7 +381,7 @@ void UIManager::renderReader() {
   // Content
   display->setFont(&FreeSans7pt7b); // New serif font
   display->setCursor(
-      0, 11); // Start closer to top-left but account for baseline (y=15 approx)
+      10, 11); // Start closer to top-left but account for baseline (y=15 approx)
 
   if (current_page_index < pages.size()) {
     display->print(pages[current_page_index].c_str());
@@ -400,16 +401,20 @@ void UIManager::loop() {
   int64_t last_ui_update = 0;
 
   while (1) {
+    // Wait for notification (from buttons or environmental update)
+    // Use a timeout (e.g., 5s) just in case, or max delay
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
     // 1. Poll Inputs (every 50ms)
     DeviceStatus current_status = global_data.getStatus();
-    updateButtonState(btn4, current_status.touch_4);
-    updateButtonState(btn5, current_status.touch_5);
+    updateButtonState(btn19, current_status.btn_19);
+    updateButtonState(btn20, current_status.btn_20);
 
     bool need_redraw = false;
 
     // 2. Handle Logic based on State
     if (current_state == STATE_HOME) {
-      if (btn5.pressed) {
+      if (btn20.pressed) {
         ESP_LOGI(TAG, "Entering Menu");
         current_state = STATE_MENU;
         selected_menu_index = 0;
@@ -420,18 +425,17 @@ void UIManager::loop() {
         need_redraw = true;
       }
 
-      // Time based update for Home (every 1 sec)
-      int64_t now_us = esp_timer_get_time();
-      if ((now_us - last_ui_update) > 1000000) {
+      // Update only when new environmental data is available
+      if (current_status.last_env_update_us > last_ui_update) {
         need_redraw = true;
       }
     } else if (current_state == STATE_MENU) {
-      if (btn4.pressed) {
+      if (btn19.pressed) {
         // Cycle Selection
         selected_menu_index = (selected_menu_index + 1) % menu_item_count;
         need_redraw = true;
       }
-      if (btn5.pressed) {
+      if (btn20.pressed) {
         // Execute Action
         if (selected_menu_index == 0) { // Back
           current_state = STATE_HOME;
@@ -464,27 +468,27 @@ void UIManager::loop() {
         }
       }
     } else if (current_state == STATE_READER) {
-      // Button 5 Logic: Hold for Exit, Click for Back
-      if (current_status.touch_5) { // Button is held down
-        if (btn5_press_start_time == 0) {
-          btn5_press_start_time = esp_timer_get_time();
-          btn5_hold_triggered = false;
+      // Button 20 Logic: Hold for Exit, Click for Previous Page
+      if (current_status.btn_20) { // Button is held down
+        if (btn20_press_start_time == 0) {
+          btn20_press_start_time = esp_timer_get_time();
+          btn20_hold_triggered = false;
         } else {
-          if (!btn5_hold_triggered &&
-              (esp_timer_get_time() - btn5_press_start_time > 1000000)) {
+          if (!btn20_hold_triggered &&
+              (esp_timer_get_time() - btn20_press_start_time > 1000000)) {
             // Hold detected (> 1s) -> Exit
             ESP_LOGI(TAG, "Hold detected: Exiting Reader");
             saveProgress();
             current_state = STATE_MENU;
             need_redraw = true;
-            btn5_hold_triggered = true; // Prevent click action on release
+            btn20_hold_triggered = true; // Prevent click action on release
           }
         }
       } else { // Button is released
-        if (btn5_press_start_time != 0) {
+        if (btn20_press_start_time != 0) {
           // Falling edge
-          if (!btn5_hold_triggered &&
-              (esp_timer_get_time() - btn5_press_start_time < 1000000)) {
+          if (!btn20_hold_triggered &&
+              (esp_timer_get_time() - btn20_press_start_time < 1000000)) {
             // Short press -> Previous Page
             if (current_page_index > 0) {
               current_page_index--;
@@ -493,14 +497,14 @@ void UIManager::loop() {
               need_redraw = true;
             }
           }
-          btn5_press_start_time = 0;
-          btn5_hold_triggered = false;
+          btn20_press_start_time = 0;
+          btn20_hold_triggered = false;
         }
       }
 
-      if (btn4.pressed) { // Next Page
+      if (btn19.pressed) { // Next Page
         if (!pages.empty()) {
-          if (current_page_index < pages.size() - 1) {
+          if (current_page_index < (int)pages.size() - 1) {
             current_page_index++;
             saveProgress();
             force_full_refresh = true;
@@ -534,6 +538,7 @@ void UIManager::loop() {
       last_ui_update = esp_timer_get_time();
     }
 
-    vTaskDelay(pdMS_TO_TICKS(50)); // Fast polling
+    // Handled by task notification wait
+    // vTaskDelay(pdMS_TO_TICKS(50)); // Fast polling
   }
 }

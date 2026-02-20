@@ -175,7 +175,7 @@ esp_err_t Scd4xManager::reinit() {
   scd4x_start_periodic_measurement(&dev);
   return err;
 }
-
+/*AAAAAAAA
 esp_err_t Scd4xManager::getSensorVariant(uint16_t &variant) {
   scd4x_stop_periodic_measurement(&dev);
   vTaskDelay(pdMS_TO_TICKS(500));
@@ -184,7 +184,7 @@ esp_err_t Scd4xManager::getSensorVariant(uint16_t &variant) {
 
   scd4x_start_periodic_measurement(&dev);
   return err;
-}
+}*/
 
 void Scd4xManager::task(void *pvParameters) {
   Scd4xManager *self = (Scd4xManager *)pvParameters;
@@ -229,6 +229,7 @@ void Scd4xManager::task(void *pvParameters) {
 
     DeviceStatus status = global_data.getStatus();
     global_data.setEnvironmental(co2, temperature, humidity, status.altitude);
+    global_data.notifyUI();
 
     // Wait a bit to avoid excessive polling right after reading
     // Next sample will be ready in ~5 seconds

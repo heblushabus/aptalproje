@@ -1,4 +1,5 @@
 #include "common_data.hpp"
+#include "esp_timer.h"
 
 CommonData::CommonData() {
   mutex = xSemaphoreCreateMutex();
@@ -11,6 +12,7 @@ CommonData::CommonData() {
   status.altitude = 23.18f;
   status.battery_voltage = 3.7f;
   status.wifi_connected = false;
+  status.last_env_update_us = 0;
 }
 
 void CommonData::setStatus(const DeviceStatus &new_status) {
@@ -26,6 +28,7 @@ void CommonData::setEnvironmental(int co2, float temp, float hum, float alt) {
     status.temperature = temp;
     status.humidity = hum;
     status.altitude = alt;
+    status.last_env_update_us = esp_timer_get_time();
     xSemaphoreGive(mutex);
   }
 }
@@ -37,6 +40,24 @@ DeviceStatus CommonData::getStatus() {
     xSemaphoreGive(mutex);
   }
   return current_status;
+}
+
+void CommonData::registerUITask(TaskHandle_t handle) {
+  if (xSemaphoreTake(mutex, portMAX_DELAY)) {
+    ui_task_handle = handle;
+    xSemaphoreGive(mutex);
+  }
+}
+
+void CommonData::notifyUI() {
+  TaskHandle_t task_to_notify = nullptr;
+  if (xSemaphoreTake(mutex, portMAX_DELAY)) {
+    task_to_notify = ui_task_handle;
+    xSemaphoreGive(mutex);
+  }
+  if (task_to_notify != nullptr) {
+    xTaskNotifyGive(task_to_notify);
+  }
 }
 
 // Instantiate global object

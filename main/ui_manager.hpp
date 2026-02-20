@@ -54,10 +54,10 @@ private:
   void saveProgress();
   void loadProgress();
 
-  ButtonState btn4;
-  ButtonState btn5;
+  ButtonState btn19;
+  ButtonState btn20;
 
   // Button Hold Tracking
-  int64_t btn5_press_start_time;
-  bool btn5_hold_triggered;
+  int64_t btn20_press_start_time;
+  bool btn20_hold_triggered;
 };

@@ -140,10 +140,6 @@ bool DisplayManager::event_callback(const esp_lcd_panel_handle_t handle,
 esp_err_t DisplayManager::init() {
   esp_err_t ret;
 
-  // Set pin 42 to HIGH (Power Enable)
-  gpio_reset_pin(GPIO_NUM_42);
-  gpio_set_direction(GPIO_NUM_42, GPIO_MODE_OUTPUT);
-  gpio_set_level(GPIO_NUM_42, 1);
 
   // --- Init SPI Bus
   ESP_LOGI(TAG, "Initializing SPI Bus...");
@@ -153,7 +149,7 @@ esp_err_t DisplayManager::init() {
   buscfg.sclk_io_num = EXAMPLE_PIN_NUM_SCLK;
   buscfg.quadwp_io_num = -1;
   buscfg.quadhd_io_num = -1;
-  buscfg.max_transfer_sz = SOC_SPI_MAXIMUM_BUFFER_SIZE;
+  buscfg.max_transfer_sz = EPD_WIDTH * EPD_HEIGHT / 8; // Full framebuffer size for single DMA transaction
   ret = spi_bus_initialize(SPI2_HOST, &buscfg, SPI_DMA_CH_AUTO);
   if (ret != ESP_OK)
     return ret;

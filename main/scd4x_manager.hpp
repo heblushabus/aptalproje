@@ -20,7 +20,7 @@ public:
   esp_err_t performSelfTest(bool &malfunction);
   esp_err_t performFactoryReset();
   esp_err_t reinit();
-  esp_err_t getSensorVariant(uint16_t &variant);
+  //esp_err_t getSensorVariant(uint16_t &variant);
 
 private:
   static void task(void *pvParameters);

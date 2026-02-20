@@ -20,9 +20,12 @@ struct DeviceStatus {
   float battery_voltage;
   bool wifi_connected;
 
-  // Touch inputs
-  bool touch_4;
-  bool touch_5;
+  // Button inputs
+  bool btn_19;
+  bool btn_20;
+
+  // Measurement timestamp
+  int64_t last_env_update_us;
 };
 
 class CommonData {
@@ -36,9 +39,13 @@ public:
   // Thread-safe getter
   DeviceStatus getStatus();
 
+  void registerUITask(TaskHandle_t handle);
+  void notifyUI();
+
 private:
   DeviceStatus status;
   SemaphoreHandle_t mutex;
+  TaskHandle_t ui_task_handle = nullptr;
 };
 
 // Global instance
